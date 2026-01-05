@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local LLM Chat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+
+        .chat-messages {
+            scroll-behavior: smooth;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white">
+    <div class="flex h-screen">
+        <!-- Sidebar -->
+        <div class="w-64 bg-gray-800 border-r border-gray-700 flex flex-col">
+            <div class="p-4 border-b border-gray-700">
+                <button id="newChatBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2 transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                    </svg>
+                    New Chat
+                </button>
+            </div>
+
+            <div id="chatsList" class="flex-1 overflow-y-auto p-4">
+                <!-- Chats will be loaded here -->
+            </div>
+
+            <div class="p-4 border-t border-gray-700">
+                <div class="flex items-center gap-2">
+                    <div id="statusIndicator" class="w-2 h-2 rounded-full bg-gray-500"></div>
+                    <span id="statusText" class="text-sm text-gray-400">Checking...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Chat Area -->
+        <div class="flex-1 flex flex-col">
+            <!-- Header -->
+            <div class="bg-gray-800 border-b border-gray-700 p-4">
+                <div class="flex items-center gap-3">
+                    <svg class="w-8 h-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+                    </svg>
+                    <div>
+                        <h1 class="text-xl font-bold">Local LLM Chat</h1>
+                        <p class="text-sm text-gray-400">Running locally via Ollama</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Messages -->
+            <div id="messagesContainer" class="flex-1 overflow-y-auto p-6 chat-messages">
+                <div id="emptyState" class="h-full flex items-center justify-center">
+                    <div class="text-center">
+                        <svg class="w-16 h-16 mx-auto text-gray-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+                        </svg>
+                        <h2 class="text-2xl font-bold mb-2">Start a new chat to begin</h2>
+                        <p class="text-gray-400">Your conversations are stored locally in your SQLite database.</p>
+                    </div>
+                </div>
+                <div id="messagesList" class="space-y-4 hidden"></div>
+            </div>
+
+            <!-- Input -->
+            <div id="inputContainer" class="p-4 border-t border-gray-700 hidden">
+                <div class="flex gap-2">
+                    <textarea
+                        id="messageInput"
+                        placeholder="Type your message... (Enter to send, Shift+Enter for new line)"
+                        class="flex-1 bg-gray-700 rounded-lg px-4 py-3 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        rows="2"
+                    ></textarea>
+                    <button
+                        id="sendBtn"
+                        class="px-6 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg transition-colors flex items-center justify-center"
+                    >
+                        <svg id="sendIcon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path>
+                        </svg>
+                        <svg id="loadingIcon" class="w-5 h-5 animate-spin hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        
+        let chats = [];
+        let currentChatId = null;
+        let messages = [];
+        let isStreaming = false;
+
+        // DOM Elements
+        const chatsList = document.getElementById('chatsList');
+        const messagesList = document.getElementById('messagesList');
+        const messagesContainer = document.getElementById('messagesContainer');
+        const emptyState = document.getElementById('emptyState');
+        const inputContainer = document.getElementById('inputContainer');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const newChatBtn = document.getElementById('newChatBtn');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const statusText = document.getElementById('statusText');
+        const sendIcon = document.getElementById('sendIcon');
+        const loadingIcon = document.getElementById('loadingIcon');
+
+        // Initialize
+        async function init() {
+            await checkConnection();
+            await loadChats();
+        }
+
+        // Check API connection
+        async function checkConnection() {
+            try {
+                const response = await fetch(`${API_BASE}/`);
+                const data = await response.json();
+                
+                if (data.ollama_connected) {
+                    setConnectionStatus('connected', 'Connected');
+                } else {
+                    setConnectionStatus('ollama_offline', 'Ollama offline');
+                }
+            } catch (error) {
+                setConnectionStatus('api_offline', 'API offline');
+            }
+        }
+
+        function setConnectionStatus(status, text) {
+            statusText.textContent = text;
+            
+            if (status === 'connected') {
+                statusIndicator.className = 'w-2 h-2 rounded-full bg-green-500';
+            } else if (status === 'checking') {
+                statusIndicator.className = 'w-2 h-2 rounded-full bg-yellow-500';
+            } else {
+                statusIndicator.className = 'w-2 h-2 rounded-full bg-red-500';
+            }
+        }
+
+        // Load chats
+        async function loadChats() {
+            try {
+                const response = await fetch(`${API_BASE}/chats`);
+                chats = await response.json();
+                renderChats();
+            } catch (error) {
+                console.error('Failed to load chats:', error);
+            }
+        }
+
+        function renderChats() {
+            chatsList.innerHTML = chats.map(chat => `
+                <button
+                    onclick="selectChat('${chat.chat_id}')"
+                    class="w-full text-left p-3 rounded-lg mb-2 transition-colors ${
+                        currentChatId === chat.chat_id ? 'bg-gray-700' : 'hover:bg-gray-700/50'
+                    }"
+                >
+                    <div class="font-medium truncate">${chat.last_message || 'New chat'}</div>
+                    <div class="text-sm text-gray-400">${chat.message_count} messages</div>
+                </button>
+            `).join('');
+        }
+
+        // Select chat
+        async function selectChat(chatId) {
+            currentChatId = chatId;
+            await loadChatHistory(chatId);
+            renderChats();
+            showChatInterface();
+        }
+
+        // Load chat history
+        async function loadChatHistory(chatId) {
+            try {
+                const response = await fetch(`${API_BASE}/chat/${chatId}/history`);
+                const data = await response.json();
+                messages = data.messages;
+                renderMessages();
+            } catch (error) {
+                console.error('Failed to load chat history:', error);
+            }
+        }
+
+        function renderMessages() {
+            if (messages.length === 0) {
+                messagesList.innerHTML = '';
+                emptyState.innerHTML = `
+                    <div class="text-center">
+                        <svg class="w-16 h-16 mx-auto text-gray-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+                        </svg>
+                        <h2 class="text-2xl font-bold mb-2">No messages yet</h2>
+                        <p class="text-gray-400">Type your message below to start chatting</p>
+                    </div>
+                `;
+                emptyState.classList.remove('hidden');
+                messagesList.classList.add('hidden');
+            } else {
+                emptyState.classList.add('hidden');
+                messagesList.classList.remove('hidden');
+                
+                messagesList.innerHTML = messages.map(msg => `
+                    <div class="flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}">
+                        <div class="max-w-3xl ${msg.role === 'user' ? 'bg-blue-600' : 'bg-gray-700'} rounded-lg p-4">
+                            <div class="font-semibold mb-1 text-sm text-gray-300">
+                                ${msg.role === 'user' ? 'You' : 'Assistant'}
+                            </div>
+                            <div class="whitespace-pre-wrap">${msg.content || '<div class="flex items-center gap-2"><svg class="w-4 h-4 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg> Thinking...</div>'}</div>
+                        </div>
+                    </div>
+                `).join('');
+                
+                scrollToBottom();
+            }
+        }
+
+        function scrollToBottom() {
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function showChatInterface() {
+            emptyState.innerHTML = '';
+            inputContainer.classList.remove('hidden');
+        }
+
+        // Create new chat
+        async function createNewChat() {
+            try {
+                const response = await fetch(`${API_BASE}/chat/new`, { method: 'POST' });
+                const data = await response.json();
+                currentChatId = data.chat_id;
+                messages = [];
+                await loadChats();
+                renderMessages();
+                showChatInterface();
+                messageInput.focus();
+            } catch (error) {
+                console.error('Failed to create new chat:', error);
+            }
+        }
+
+        // Send message
+        async function sendMessage() {
+            if (!messageInput.value.trim() || !currentChatId || isStreaming) return;
+
+            const userMessage = messageInput.value.trim();
+            messageInput.value = '';
+
+            // Add user message
+            messages.push({ role: 'user', content: userMessage });
+            messages.push({ role: 'assistant', content: '' });
+            renderMessages();
+
+            isStreaming = true;
+            updateSendButton();
+
+            try {
+                const url = `${API_BASE}/chat/${currentChatId}/message`;
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        message: userMessage, 
+                        context_length: 10 
+                    })
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let fullResponse = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                if (data.content) {
+                                    fullResponse += data.content;
+                                    messages[messages.length - 1].content = fullResponse;
+                                    renderMessages();
+                                }
+                            } catch (e) {
+                                // Ignore parse errors
+                            }
+                        }
+                    }
+                }
+
+                await loadChats();
+            } catch (error) {
+                console.error('Failed to send message:', error);
+                messages[messages.length - 1].content = 'Error: Failed to get response. Please check if Ollama is running.';
+                renderMessages();
+            } finally {
+                isStreaming = false;
+                updateSendButton();
+            }
+        }
+
+        function updateSendButton() {
+            sendBtn.disabled = !messageInput.value.trim() || isStreaming;
+            
+            if (isStreaming) {
+                sendIcon.classList.add('hidden');
+                loadingIcon.classList.remove('hidden');
+            } else {
+                sendIcon.classList.remove('hidden');
+                loadingIcon.classList.add('hidden');
+            }
+        }
+
+        // Event listeners
+        newChatBtn.addEventListener('click', createNewChat);
+        sendBtn.addEventListener('click', sendMessage);
+        messageInput.addEventListener('input', updateSendButton);
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        // Initialize app
+        init();
+    </script>
+</body>
+</html>
