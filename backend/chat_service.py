@@ -73,6 +73,17 @@ class ChatService:
                 return
 
             # Tool call detected — do NOT expose to user
+            # Prevent trivial or accidental tool calls
+            if tool_call["name"] == "echo":
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "Echo tool is for debugging only. "
+                        "Respond to the user in natural language instead."
+                    )
+                })
+                continue
+            
             tool_result = await self.mcp_executor.execute(tool_call)
 
             # Inject tool result as system message
