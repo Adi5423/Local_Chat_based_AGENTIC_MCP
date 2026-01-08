@@ -1,0 +1,6 @@
+*.ai 
+*.txt
+__pycache__
+node_modules
+.git
+.venv

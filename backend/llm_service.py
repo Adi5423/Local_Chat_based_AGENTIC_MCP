@@ -1,82 +1,98 @@
 import httpx
-from typing import AsyncGenerator, List, Dict
 import json
+from typing import AsyncGenerator, List, Dict, Optional
+
+from mcp.registry import MCPToolRegistry
 
 
-class OllamaService:
-    def __init__(self, base_url: str = "http://localhost:11434"):
+class LLMClient:
+    """
+    Generic LLM client for llama.cpp OpenAI-compatible server.
+    """
+
+    def __init__(
+        self,
+        base_url: str = "http://127.0.0.1:8080/v1",
+        model: str = "qwen2.5-coder.gguf",
+        tool_registry: Optional[MCPToolRegistry] = None,
+    ):
         self.base_url = base_url
-        self.model = "qwen2.5-coder:1.5b"
-        self.system_prompt = """You are an expert coding assistant. You provide:
-- Clear, well-commented code examples
-- Explanations of programming concepts
-- Debugging assistance
-- Best practices and design patterns
-- Code reviews and optimization suggestions
+        self.model = model
+        self.tool_registry = tool_registry
 
-Always format code blocks with proper syntax highlighting.
-Be concise but thorough in your explanations."""
-    
-    async def health_check(self) -> bool:
-        """Check if Ollama is running"""
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(f"{self.base_url}/api/tags", timeout=5.0)
-                return response.status_code == 200
-        except Exception:
-            return False
-    
+        self.system_prompt = """You are an expert coding assistant.
+
+You may have access to tools.
+
+When a tool is required, respond ONLY with valid JSON in this exact format:
+
+{
+  "tool_call": {
+    "name": "<tool_name>",
+    "arguments": { "<arg>": "<value>" }
+  }
+}
+
+Do NOT explain tool calls.
+Do NOT use markdown inside tool calls.
+If no tool is needed, respond normally in plain text.
+"""
+
     async def stream_chat(
-        self, 
-        messages: List[Dict[str, str]]
+        self,
+        messages: List[Dict[str, str]],
     ) -> AsyncGenerator[str, None]:
-        """Stream chat completion from Ollama"""
-        
-        # Prepend system message
-        full_messages = [
-            {"role": "system", "content": self.system_prompt}
-        ] + messages
-        
+        """
+        Stream chat completion using llama.cpp OpenAI-compatible API.
+        """
+
+        # Build system prompt with tool descriptions
+        system_prompt = self.system_prompt
+
+        if self.tool_registry:
+            tools = self.tool_registry.list_tools()
+            if tools:
+                system_prompt += "\n\nAVAILABLE TOOLS:\n"
+                for tool in tools:
+                    system_prompt += (
+                        f"\nTool name: {tool['name']}\n"
+                        f"Description: {tool['description']}\n"
+                        f"Input schema: {tool['input_schema']}\n"
+                    )
+
         payload = {
             "model": self.model,
-            "messages": full_messages,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                *messages,
+            ],
             "stream": True,
-            "options": {
-                "temperature": 0.7,
-                "top_p": 0.9,
-                "num_ctx": 4096
-            }
+            "temperature": 0.7,
         }
-        
-        async with httpx.AsyncClient(timeout=120.0) as client:
+
+        async with httpx.AsyncClient(timeout=300.0) as client:
             async with client.stream(
                 "POST",
-                f"{self.base_url}/api/chat",
-                json=payload
+                f"{self.base_url}/chat/completions",
+                json=payload,
             ) as response:
+
                 response.raise_for_status()
-                
+
                 async for line in response.aiter_lines():
-                    if line.strip():
-                        try:
-                            data = json.loads(line)
-                            if "message" in data:
-                                content = data["message"].get("content", "")
-                                if content:
-                                    yield content
-                            
-                            # Check if done
-                            if data.get("done", False):
-                                break
-                        except json.JSONDecodeError:
-                            continue
-    
-    async def get_chat_response(
-        self, 
-        messages: List[Dict[str, str]]
-    ) -> str:
-        """Get complete chat response (non-streaming)"""
-        full_response = ""
-        async for chunk in self.stream_chat(messages):
-            full_response += chunk
-        return full_response
+                    if not line or not line.startswith("data:"):
+                        continue
+
+                    data = line.removeprefix("data:").strip()
+
+                    if data == "[DONE]":
+                        return
+
+                    try:
+                        event = json.loads(data)
+                        delta = event["choices"][0]["delta"]
+                        content = delta.get("content")
+                        if content:
+                            yield content
+                    except Exception:
+                        continue

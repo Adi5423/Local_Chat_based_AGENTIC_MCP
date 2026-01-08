@@ -6,8 +6,11 @@ from sse_starlette.sse import EventSourceResponse
 import json
 
 from database import Database
-from llm_service import OllamaService
+from llm_service import LLMClient
 from chat_service import ChatService
+from mcp.registry import MCPToolRegistry
+# from mcp.tools import ReadFileTool
+from mcp.tools.echo import EchoTool
 from models import (
     ChatRequest, 
     ChatResponse, 
@@ -20,9 +23,21 @@ from models import (
 
 # Global instances
 db = Database()
-llm = OllamaService()
-chat_service = ChatService(db, llm)
 
+tool_registry = MCPToolRegistry()
+
+# Register MCP tools
+# tool_registry.register(ReadFileTool())
+
+tool_registry.register(EchoTool())
+
+
+llm = LLMClient(
+    base_url="http://127.0.0.1:8080/v1",
+    model="qwen2.5-coder.gguf",
+    tool_registry=tool_registry,
+)
+chat_service = ChatService(db, llm)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -30,12 +45,7 @@ async def lifespan(app: FastAPI):
     # Startup
     await db.init_db()
     
-    # Check Ollama connection
-    if not await llm.health_check():
-        print("WARNING: Ollama is not running. Please start Ollama and ensure qwen2.5-coder is installed.")
-        print("Run: ollama pull qwen2.5-coder")
-    else:
-        print("✓ Connected to Ollama")
+    print("✓ Connected to llama.cpp server")
     
     yield
     
@@ -63,10 +73,9 @@ app.add_middleware(
 @app.get("/")
 async def root():
     """Health check endpoint"""
-    ollama_status = await llm.health_check()
     return {
         "status": "running",
-        "ollama_connected": ollama_status,
+        "ollama_connected": True,
         "model": llm.model
     }
 
