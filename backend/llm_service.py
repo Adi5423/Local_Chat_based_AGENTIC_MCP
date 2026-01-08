@@ -39,6 +39,10 @@ IMPORTANT:
 - Call a tool ONLY once per step
 - AFTER a tool result is provided, you MUST respond in plain text
 - DO NOT call the same tool again unless explicitly required
+IMPORTANT OUTPUT RULE:
+- Never include tool-call JSON inside explanations or markdown
+- Tool calls must be the ONLY content of the response when used
+
 """
 
     async def stream_chat(

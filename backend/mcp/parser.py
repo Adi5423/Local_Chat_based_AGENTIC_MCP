@@ -1,18 +1,18 @@
 import json
 from typing import Optional
-
 from .types import ToolCall
 
 
 def parse_tool_call(text: str) -> Optional[ToolCall]:
     """
-    Attempt to parse a tool call from model output.
-    Returns None if not a valid tool call.
+    Parse a tool call ONLY if the entire response is valid JSON.
+    This prevents accidental tool calls embedded in explanations.
     """
 
     text = text.strip()
 
-    if not text.startswith("{"):
+    # Hard rule: tool calls must be pure JSON, nothing else
+    if not (text.startswith("{") and text.endswith("}")):
         return None
 
     try:

@@ -74,15 +74,18 @@ class ChatService:
 
             # Tool call detected — do NOT expose to user
             # Prevent trivial or accidental tool calls
+            # Allow echo ONLY if user explicitly asked for it
             if tool_call["name"] == "echo":
-                messages.append({
-                    "role": "system",
-                    "content": (
-                        "Echo tool is for debugging only. "
-                        "Respond to the user in natural language instead."
-                    )
-                })
-                continue
+                if "use the echo tool" not in user_message.lower():
+                    messages.append({
+                        "role": "system",
+                        "content": (
+                            "Echo tool should only be used when the user explicitly requests it. "
+                            "Respond to the user in natural language instead."
+                        )
+                    })
+                    continue
+
             
             tool_result = await self.mcp_executor.execute(tool_call)
 
