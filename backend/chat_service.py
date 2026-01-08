@@ -62,14 +62,14 @@ class ChatService:
 
             async for chunk in self.llm.stream_chat(messages):
                 full_response += chunk
-                yield chunk
 
             # Try to parse tool call
             tool_call = parse_tool_call(full_response)
 
             if tool_call is None:
-                # Final assistant message
+                # Final assistant response — now stream to user
                 await self.db.save_message(chat_id, "assistant", full_response)
+                yield full_response
                 return
 
             # Tool call detected — do NOT expose to user

@@ -35,7 +35,10 @@ When a tool is required, respond ONLY with valid JSON in this exact format:
 
 Do NOT explain tool calls.
 Do NOT use markdown inside tool calls.
-If no tool is needed, respond normally in plain text.
+IMPORTANT:
+- Call a tool ONLY once per step
+- AFTER a tool result is provided, you MUST respond in plain text
+- DO NOT call the same tool again unless explicitly required
 """
 
     async def stream_chat(
